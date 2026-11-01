@@ -2,7 +2,7 @@
 // @name         芯位刷课
 // @name:zh-CN   芯位刷课（芯位蜜线）
 // @namespace    https://github.com/Selffox/beeline-ai-helper
-// @version      0.10.1
+// @version      0.10.2
 // @description  芯位蜜线/芯位教育（www.beeline-ai.com）自动刷课：播完才跳、完成度判定、平台倍速、三级重试、题库+AI 答题
 // @author       Selffox(重构) · Zerox(原版) · lxjuyn(新域名适配)
 // 来源说明：基于 lxjuyn/xinwei-beeline-auto（GPL-3.0）二次开发，原作者 Zerox / lxjuyn
@@ -49,6 +49,7 @@
     maxReload: 2,
     showLog: true,
     barPos: null,
+    disclaimerAccepted: false,
     ai: {
       baseUrl: 'https://api.deepseek.com/v1',
       model: 'deepseek-flash',
@@ -400,26 +401,42 @@
   const BANK_KEY = 'xw_bank';
   const bank = () => store.get(BANK_KEY, {});
 
+  const Q_SEL = '.question-box, .homework-single-selected, .homework-multiple-selected, .homework-true-or-false, .homework-cloze, .homework-question-editor';
+  const Q_TYPES = [
+    ['homework-multiple-selected', 'multiple'],
+    ['homework-true-or-false', 'judgement'],
+    ['homework-cloze', 'completion'],
+    ['homework-question-editor', 'subjective'],
+    ['homework-single-selected', 'single']
+  ];
+
   function pageKind() {
     const h = (location.hash || '') + location.search;
+    const hasQ = !!$(Q_SEL);
     if (/homeworkpaperid/i.test(h)) return 'homework';
-    if (/\/(exam|paper|test)/i.test(h) && $('.question-box, .question')) return 'exam';
-    if ($('.question-box, .question')) return 'question';
+    if (/homework/i.test(h) && hasQ) return 'homework';
+    if (/\/(exam|paper|test)/i.test(h) && hasQ) return 'exam';
+    if (hasQ) return 'question';
     return '';
   }
 
   function parseQuestion(boxRoot) {
-    const box = boxRoot || $('.question-box') || $('.question') || document.body;
-    const titleEl = box.querySelector('.topic-title') || box.querySelector('.question-title') || box.querySelector('h1,h2,h3,h4');
+    const box = boxRoot || $(Q_SEL) || document.body;
+    const titleEl = box.querySelector('.topic-title, .subject-title, .question-title') || box.querySelector('h1,h2,h3,h4');
     const title = clip(titleEl ? titleEl.innerText : '', 300);
-    const typeText = clip(box.innerText, 400);
+    const cls = (typeof box.className === 'string' ? box.className : '') || '';
     let type = 'unknown';
-    if (/多选|多项选择/.test(typeText)) type = 'multiple';
-    else if (/单选|单项选择/.test(typeText)) type = 'single';
-    else if (/判断/.test(typeText)) type = 'judgement';
-    else if (/填空/.test(typeText)) type = 'completion';
-    else if (/主观|简答|论述|问答/.test(typeText)) type = 'subjective';
-    const opts = $$('.el-radio, .el-checkbox', box).map(el => clip((el.querySelector('.label') || el).innerText, 120)).filter(Boolean);
+    for (const [k, v] of Q_TYPES) { if (cls.includes(k)) { type = v; break; } }
+    if (type === 'unknown') {
+      const typeText = clip(box.innerText, 400);
+      if (/多选|多项选择/.test(typeText)) type = 'multiple';
+      else if (/单选|单项选择/.test(typeText)) type = 'single';
+      else if (/判断/.test(typeText)) type = 'judgement';
+      else if (/填空/.test(typeText)) type = 'completion';
+      else if (/主观|简答|论述|问答/.test(typeText)) type = 'subjective';
+    }
+    const opts = $('.el-radio, .el-checkbox, .el-radio-group label, .el-checkbox-group label', box)
+      .map(el => clip((el.querySelector('.label') || el).innerText, 120)).filter(Boolean);
     return { title, type, opts };
   }
 
@@ -470,7 +487,7 @@
   }
 
   function applyAnswer(q, ans, boxRoot) {
-    const box = boxRoot || $('.question-box') || $('.question') || document.body;
+    const box = boxRoot || $(Q_SEL) || document.body;
     if (q.type === 'single' || q.type === 'judgement') {
       const labels = $$('.el-radio-group label', box);
       let idx = -1;
@@ -671,7 +688,7 @@
   }
 
   async function answerAll() {
-    const boxes = $('.question-box, .question').filter(b => !b.classList.contains('xw-filled'));
+    const boxes = $(Q_SEL).filter(b => !b.classList.contains('xw-filled') && vis(b));
     if (!boxes.length) { log('没有找到可作答的题目（或已全部填过）', 'warn'); return; }
     log('开始答题：共 ' + boxes.length + ' 题');
     for (const box of boxes) {
@@ -682,14 +699,26 @@
   }
 
   function findSubmitButton() {
-    const cands = $('button, .el-button, a, span').filter(vis);
-    const re = /^(提交|交卷|提交作业|提交答案|立即提交)$/;
-    return cands.find(el => re.test(clip(el.innerText, 12))) || null;
+    const cands = $('button, .el-button, a').filter(el => vis(el) && !el.closest('#xw-panel'));
+    const exact = cands.find(el => clip(el.innerText, 12) === '提交作业');
+    if (exact) return exact;
+    return cands.find(el => /^(提交|交卷|提交答案|立即提交)$/.test(clip(el.innerText, 12))) || null;
   }
 
   function findConfirmButton() {
     const btns = $('.el-message-box__btns button, .el-dialog__footer button');
     return btns.find(el => /确定|确认|提交/.test(clip(el.innerText, 8))) || null;
+  }
+
+  function submitDisabled(btn) {
+    if (!btn) return true;
+    const cls = typeof btn.className === 'string' ? btn.className : '';
+    return btn.disabled || /is-disabled|disabled/i.test(cls) || btn.getAttribute('aria-disabled') === 'true';
+  }
+
+  function hasUnansweredWarning() {
+    const t = clip(document.body.innerText || '', 40000);
+    return /未(作答|回答|完成)|尚未(作答|完成)|还有\s*\d+\s*题|请(先)?(答完|完成所有|作答)/.test(t);
   }
 
   async function submitPaper() {
@@ -698,8 +727,16 @@
       log('当前不是作业页（' + (kind || '未知') + '）：考试/其它页面不自动提交，请手动检查后提交', 'err');
       return;
     }
+    if (hasUnansweredWarning()) {
+      log('页面提示还有未作答的题目，已取消提交，请人工补答后再提交', 'err');
+      return;
+    }
     const btn = findSubmitButton();
     if (!btn) { log('没找到提交按钮，请手动提交', 'warn'); return; }
+    if (submitDisabled(btn)) {
+      log('「提交作业」按钮当前不可用（可能有题目未作答），30 秒后再试', 'warn');
+      return;
+    }
     if (!confirm('确定提交作业吗？\n已填入 ' + pending.n + ' 题，请确认答案无误。')) { log('已取消提交', 'warn'); return; }
     log('点击提交（已填 ' + pending.n + ' 题）', 'warn');
     btn.click();
@@ -709,6 +746,47 @@
     await sleep(1200);
     const msg = $('.el-message, .el-message-box__message').map(el => clip(el.innerText, 40)).join(' | ');
     if (msg) log('提交反馈：' + msg, 'ok');
+  }
+
+  const PLATFORM_ALERTS = ['学习状态异常', '请刷新后继续学习', '不允许倍速播放', '播放位置不合法'];
+  let alertAt = 0, alertScanAt = 0, lastAlertMsg = '', lastAlertMsgAt = 0;
+
+  function onPlatformAlert(msg) {
+    const t0 = Date.now();
+    if (msg === lastAlertMsg && t0 - lastAlertMsgAt < 30000) return;
+    lastAlertMsg = msg; lastAlertMsgAt = t0;
+    log('平台提示：' + msg, 'warn');
+    if (msg === '不允许倍速播放') {
+      state.speedBlocked = true;
+      const v = vid();
+      if (v && Math.abs(v.playbackRate - 1) > 0.01) { try { v.playbackRate = 1; } catch (e) {} }
+      log('平台拒绝倍速，已回退 1x 播放', 'warn');
+      updateStatus();
+      return;
+    }
+    if (Date.now() - alertAt < 60000) { log('60 秒内已刷新过一次，先不自动刷新，请手动检查', 'err'); return; }
+    alertAt = Date.now();
+    log('检测到平台异常提示，2 秒后刷新页面尝试恢复', 'warn');
+    setTimeout(() => location.reload(), 2000);
+  }
+
+  function watchPlatformAlerts() {
+    const obs = new MutationObserver((muts) => {
+      if (!state.running) return;
+      const now = Date.now();
+      if (now - alertScanAt < 600) return;
+      for (const m of muts) {
+        for (const n of m.addedNodes) {
+          if (!n || n.nodeType !== 1) continue;
+          if (n.closest && n.closest('#xw-panel, #xw-modal, #xw-bar')) continue;
+          const t = n.textContent || '';
+          if (!t || t.length > 300) continue;
+          const hit = PLATFORM_ALERTS.find(k => t.includes(k));
+          if (hit) { alertScanAt = now; onPlatformAlert(hit); return; }
+        }
+      }
+    });
+    obs.observe(document.documentElement, { childList: true, subtree: true });
   }
 
   async function answerCurrent() {
@@ -748,7 +826,7 @@
 
   /* -------------------------------------------------------------------- UI */
   const META = {
-    version: '0.10.1',
+    version: '0.10.2',
     maintainer: 'Selffox',
     github: 'https://github.com/Selffox/beeline-ai-helper',
     email: '',
@@ -772,6 +850,13 @@
   #xw-bar .gear{font-size:13px;color:#94a3b8;padding-left:2px;cursor:pointer}
   #xw-bar .gear:hover{color:#4f46e5}
 
+  #xw-modal{position:fixed;inset:0;z-index:2147483002;background:rgba(15,23,42,.45);display:flex;align-items:center;justify-content:center}
+  #xw-modal[hidden]{display:none}
+  .xw-modal-card{width:320px;background:#fff;border-radius:14px;padding:16px 16px 14px;box-shadow:0 20px 44px rgba(15,23,42,.3);
+    font:13px/1.7 -apple-system,"Segoe UI","Microsoft YaHei",sans-serif;color:#475569}
+  .xw-modal-card b{display:block;font-size:14px;color:#0f172a;margin-bottom:8px}
+  .xw-modal-card p{margin:0 0 8px;font-size:12px}
+  #xw-agree{width:100%;margin-top:4px;padding:9px 0;border-radius:10px;border:1px solid #4f46e5;background:#4f46e5;color:#fff;font-size:13px;cursor:pointer}
   #xw-panel{position:fixed;left:16px;bottom:16px;width:320px;z-index:2147483001;background:#fff;border:1px solid #e5e7eb;
     border-radius:14px;box-shadow:0 14px 34px rgba(15,23,42,.18);overflow:hidden;display:none;
     font:13px/1.5 -apple-system,"Segoe UI","Microsoft YaHei",sans-serif;color:#334155}
@@ -859,6 +944,14 @@
     const wrap = document.createElement('div');
     wrap.innerHTML = `
       <div id="xw-bar"><span class="dot"></span><span class="txt">已停止</span><span class="gear" title="设置">⚙</span></div>
+      <div id="xw-modal" hidden>
+        <div class="xw-modal-card">
+          <b>使用须知</b>
+          <p>本脚本仅供个人学习与测试使用，禁止商业用途；使用风险自负，作者不对成绩、账号及任何后果负责。</p>
+          <p>答题功能为测试功能，答案仅供参考；题库与 AI 服务可能由第三方收费，与本脚本作者无关。</p>
+          <button id="xw-agree">我已知晓</button>
+        </div>
+      </div>
       <div id="xw-panel">
         <div id="xw-hd"><span>芯位刷课</span><span class="ops"><button id="xw-gear" title="设置">⚙</button><button id="xw-info" title="关于">ⓘ</button><button id="xw-min" title="收起">－</button></span></div>
 
@@ -1123,6 +1216,13 @@
 
     bindTabs();
     fillMeta();
+
+    if (!CFG.disclaimerAccepted) $b('xw-modal').hidden = false;
+    $b('xw-agree').addEventListener('click', () => {
+      CFG.disclaimerAccepted = true;
+      saveCfg();
+      $b('xw-modal').hidden = true;
+    });
     applyBarPos();
     showPanel('main');
     foldPanel();
@@ -1193,6 +1293,7 @@
     if ($('#xw-panel')) return;
     injectCSS();
     buildUI();
+    watchPlatformAlerts();
     log('脚本已加载（GPL-3.0 · 基于 lxjuyn/xinwei-beeline-auto）');
     if (CFG.enabled) setRunning(true);
     // 页面路由变化时刷新状态
