@@ -5,7 +5,16 @@
 // @version      0.10.4
 // @description  芯位蜜线/芯位教育（www.beeline-ai.com）自动刷课：播完才跳、完成度判定、平台倍速、三级重试、题库+AI 答题
 // @author       Selffox(重构) · Zerox(原版) · lxjuyn(新域名适配)
+// @tag          芯位蜜线
+// @tag          beeline
+// @tag          自动刷课
+// @tag          网课
+// @tag          题库
+// @tag          自动答题
 // 来源说明：基于 lxjuyn/xinwei-beeline-auto（GPL-3.0）二次开发，原作者 Zerox / lxjuyn
+// @original-author  lxjuyn
+// @original-license GPL-3.0
+// @original-script  https://github.com/lxjuyn/xinwei-beeline-auto
 // @license      GPL-3.0
 // @homepageURL  https://github.com/Selffox/beeline-ai-helper
 // @supportURL   https://github.com/Selffox/beeline-ai-helper/issues
