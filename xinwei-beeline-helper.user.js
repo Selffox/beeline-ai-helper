@@ -2,7 +2,7 @@
 // @name         芯位刷课
 // @name:zh-CN   芯位刷课（芯位蜜线）
 // @namespace    https://github.com/Selffox/beeline-ai-helper
-// @version      0.10.3
+// @version      0.10.4
 // @description  芯位蜜线/芯位教育（www.beeline-ai.com）自动刷课：播完才跳、完成度判定、平台倍速、三级重试、题库+AI 答题
 // @author       Selffox(重构) · Zerox(原版) · lxjuyn(新域名适配)
 // 来源说明：基于 lxjuyn/xinwei-beeline-auto（GPL-3.0）二次开发，原作者 Zerox / lxjuyn
@@ -821,44 +821,9 @@
     obs.observe(document.documentElement, { childList: true, subtree: true });
   }
 
-  async function answerCurrent() {
-    const q = parseQuestion();
-    if (!q.title) { log('没解析到题目', 'warn'); return; }
-    log('题目[' + q.type + ']：' + clip(q.title, 40));
-    const key = hash(q.type + '|' + q.title + '|' + q.opts.join('|'));
-    const cached = bank()[key];
-    if (cached) {
-      const ok = applyAnswer(q, normalizeChoiceAnswer(q, cached.answer));
-      log('命中本地缓存（' + (cached.src || '缓存') + '）：' + clip(String(cached.answer), 40) + (ok ? '（已填入）' : '（填充失败）'), ok ? 'ok' : 'warn');
-      return;
-    }
-    let ans = null, src = '';
-    try {
-      const b = await queryBank(q);
-      if (b) { ans = b; src = '题库'; }
-      else log('题库未命中' + (CFG.bank && CFG.bank.token ? '' : '（未配置题库 token）'), 'warn');
-    } catch (e) { log('题库查询失败：' + e.message, 'warn'); }
-    if (!ans && CFG.ai && CFG.ai.apiKey) {
-      const prompt = '题型：' + q.type + '\n题目：' + q.title + '\n选项：' + (q.opts.length ? q.opts.map((o, i) => String.fromCharCode(65 + i) + '.' + o).join(' / ') : '无') +
-        '\n请返回 JSON：{"type":"' + q.type + '","answer":"单选/判断填字母(A/B)；多选填字母串(如AC)；填空按顺序用;分隔；主观题写一段答案"}';
-      try {
-        const raw = await callAI(prompt);
-        const obj = extractJson(raw);
-        ans = obj.answer != null ? obj.answer : obj.result;
-        src = 'AI';
-      } catch (e) { log('AI 答题失败：' + e.message, 'err'); return; }
-    }
-    if (!ans) { log('题库没查到，也没配 AI key（设置里可填，可选）', 'warn'); return; }
-    const norm = normalizeChoiceAnswer(q, ans);
-    const ok = applyAnswer(q, norm);
-    const bb = bank(); bb[key] = { q: clip(q.title, 120), answer: norm, src, at: now() };
-    store.set(BANK_KEY, bb);
-    log(src + ' 答案：' + clip(String(norm), 60) + (ok ? '（已填入，未提交）' : '（填充失败）'), ok ? 'ok' : 'warn');
-  }
-
   /* -------------------------------------------------------------------- UI */
   const META = {
-    version: '0.10.3',
+    version: '0.10.4',
     maintainer: 'Selffox',
     github: 'https://github.com/Selffox/beeline-ai-helper',
     email: '',
@@ -969,12 +934,41 @@
     document.head.appendChild(s);
   }
 
+  function makeDraggable(el, opts) {
+    opts = opts || {};
+    const handle = opts.handle || el;
+    let st = null;
+    handle.addEventListener('mousedown', (e) => {
+      if (opts.ignore && e.target.closest && e.target.closest(opts.ignore)) return;
+      const r = el.getBoundingClientRect();
+      st = { x: e.clientX, y: e.clientY, l: r.left, t: r.top, moved: false };
+      e.preventDefault();
+    });
+    document.addEventListener('mousemove', (e) => {
+      if (!st) return;
+      const dx = e.clientX - st.x, dy = e.clientY - st.y;
+      if (!st.moved && Math.abs(dx) + Math.abs(dy) < (opts.threshold || 5)) return;
+      st.moved = true;
+      el.style.left = Math.max(4, Math.min(window.innerWidth - el.offsetWidth - 4, st.l + dx)) + 'px';
+      el.style.top = Math.max(4, Math.min(window.innerHeight - el.offsetHeight - 4, st.t + dy)) + 'px';
+      el.style.bottom = 'auto';
+    });
+    document.addEventListener('mouseup', () => {
+      if (!st) return;
+      const moved = st.moved;
+      st = null;
+      if (!moved) { if (opts.onClick) opts.onClick(); return; }
+      if (opts.onEnd) {
+        const r = el.getBoundingClientRect();
+        opts.onEnd({ left: Math.round(r.left), top: Math.round(r.top) });
+      }
+    });
+  }
+
   const UI = { folded: true, page: 'main', tab: 'play' };
   const TAB_LABEL = { play: '播放', answer: '答题<i class="xw-beta">测试</i>', log: '日志' };
 
-  function buildUI() {
-    const wrap = document.createElement('div');
-    wrap.innerHTML = `
+  const UI_HTML = `
       <div id="xw-bar"><span class="dot"></span><span class="txt">已停止</span><span class="gear" title="设置">⚙</span></div>
       <div id="xw-modal" hidden>
         <div class="xw-modal-card">
@@ -1046,7 +1040,12 @@
           </div>
           <button id="xw-reset">重置所有设置</button>
         </div>
-      </div>`;
+      </div>
+  `;
+
+  function buildUI() {
+    const wrap = document.createElement('div');
+    wrap.innerHTML = UI_HTML;
     document.body.appendChild(wrap);
 
     const $b = (id) => document.getElementById(id);
@@ -1130,42 +1129,17 @@
       });
     }
 
-    /* 状态条拖动 + 单击展开 */
-    (function barDrag() {
-      const bar = $b('xw-bar');
-      let st = null;
-      bar.addEventListener('mousedown', (e) => {
-        if (e.target.classList && e.target.classList.contains('gear')) return;
-        const r0 = bar.getBoundingClientRect();
-        st = { x: e.clientX, y: e.clientY, l: r0.left, t: r0.top, moved: false };
-        e.preventDefault();
-      });
-      document.addEventListener('mousemove', (e) => {
-        if (!st) return;
-        const dx = e.clientX - st.x, dy = e.clientY - st.y;
-        if (!st.moved && Math.abs(dx) + Math.abs(dy) < 5) return;
-        st.moved = true;
-        bar.style.left = Math.max(4, Math.min(window.innerWidth - bar.offsetWidth - 4, st.l + dx)) + 'px';
-        bar.style.top = Math.max(4, Math.min(window.innerHeight - bar.offsetHeight - 4, st.t + dy)) + 'px';
-        bar.style.bottom = 'auto';
-      });
-      document.addEventListener('mouseup', () => {
-        if (!st) return;
-        const moved = st.moved;
-        st = null;
-        if (moved) {
-          const rr = bar.getBoundingClientRect();
-          CFG.barPos = { left: Math.round(rr.left), top: Math.round(rr.top) };
-          saveCfg();
-        } else {
-          showPanel('main');
-        }
-      });
-      bar.querySelector('.gear').addEventListener('click', (e) => {
-        e.stopPropagation();
-        showPanel('settings');
-      });
-    })();
+    /* 状态条：拖动 + 单击展开 */
+    const bar = $b('xw-bar');
+    makeDraggable(bar, {
+      ignore: '.gear',
+      onClick: () => showPanel('main'),
+      onEnd: (pos) => { CFG.barPos = pos; saveCfg(); }
+    });
+    bar.querySelector('.gear').addEventListener('click', (e) => {
+      e.stopPropagation();
+      showPanel('settings');
+    });
 
     $b('xw-min').addEventListener('click', foldPanel);
     $b('xw-gear').addEventListener('click', () => showPanel('settings'));
@@ -1231,20 +1205,7 @@
     });
 
     /* 面板拖动 */
-    const hd = $b('xw-hd');
-    const panel = $b('xw-panel');
-    let drag = null;
-    hd.addEventListener('mousedown', (e) => {
-      drag = { x: e.clientX, y: e.clientY, l: panel.offsetLeft, t: panel.offsetTop };
-      e.preventDefault();
-    });
-    document.addEventListener('mousemove', (e) => {
-      if (!drag) return;
-      panel.style.left = Math.max(4, Math.min(window.innerWidth - panel.offsetWidth - 4, drag.l + e.clientX - drag.x)) + 'px';
-      panel.style.top = Math.max(4, Math.min(window.innerHeight - panel.offsetHeight - 4, drag.t + e.clientY - drag.y)) + 'px';
-      panel.style.bottom = 'auto';
-    });
-    document.addEventListener('mouseup', () => { drag = null; });
+    makeDraggable($b('xw-panel'), { handle: $b('xw-hd') });
 
     bindTabs();
     fillMeta();
