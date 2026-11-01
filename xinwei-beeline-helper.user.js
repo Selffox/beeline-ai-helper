@@ -2,7 +2,7 @@
 // @name         芯位刷课
 // @name:zh-CN   芯位刷课（芯位蜜线）
 // @namespace    https://github.com/Selffox/beeline-ai-helper
-// @version      0.10.0
+// @version      0.10.1
 // @description  芯位蜜线/芯位教育（www.beeline-ai.com）自动刷课：播完才跳、完成度判定、平台倍速、三级重试、题库+AI 答题
 // @author       Selffox(重构) · Zerox(原版) · lxjuyn(新域名适配)
 // 来源说明：基于 lxjuyn/xinwei-beeline-auto（GPL-3.0）二次开发，原作者 Zerox / lxjuyn
@@ -48,9 +48,10 @@
     stallSec: 60,
     maxReload: 2,
     showLog: true,
+    barPos: null,
     ai: {
-      baseUrl: 'https://api.siliconflow.cn/v1',
-      model: 'THUDM/GLM-4-9B-0414',
+      baseUrl: 'https://api.deepseek.com/v1',
+      model: 'deepseek-flash',
       apiKey: '',
       temperature: 0.2
     },
@@ -105,7 +106,7 @@
   function log(msg, level) {
     const t = new Date().toLocaleTimeString();
     state.logs.unshift({ t, msg: String(msg), level: level || 'info' });
-    if (state.logs.length > 120) state.logs.length = 120;
+    if (state.logs.length > 200) state.logs.length = 200;
     renderLog();
   }
 
@@ -407,8 +408,8 @@
     return '';
   }
 
-  function parseQuestion() {
-    const box = $('.question-box') || $('.question') || document.body;
+  function parseQuestion(boxRoot) {
+    const box = boxRoot || $('.question-box') || $('.question') || document.body;
     const titleEl = box.querySelector('.topic-title') || box.querySelector('.question-title') || box.querySelector('h1,h2,h3,h4');
     const title = clip(titleEl ? titleEl.innerText : '', 300);
     const typeText = clip(box.innerText, 400);
@@ -468,8 +469,8 @@
     return JSON.parse(m[0]);
   }
 
-  function applyAnswer(q, ans) {
-    const box = $('.question-box') || $('.question') || document.body;
+  function applyAnswer(q, ans, boxRoot) {
+    const box = boxRoot || $('.question-box') || $('.question') || document.body;
     if (q.type === 'single' || q.type === 'judgement') {
       const labels = $$('.el-radio-group label', box);
       let idx = -1;
@@ -619,6 +620,97 @@
     } catch (e) { log('题库信息获取失败：' + e.message, 'warn'); return null; }
   }
 
+  const pending = { n: 0 };
+  function refreshPending() {
+    const el = document.getElementById('xw-pending');
+    if (el) el.textContent = pending.n + ' 题';
+    const btn = document.getElementById('xw-submit');
+    if (btn) btn.style.display = pageKind() === 'homework' ? 'block' : 'none';
+    const doBtn = document.getElementById('xw-doanswer');
+    if (doBtn) doBtn.style.display = pageKind() ? 'block' : 'none';
+  }
+  function markFilled(box) {
+    if (!box) return;
+    box.classList.add('xw-filled');
+    pending.n++;
+    refreshPending();
+  }
+
+  async function answerOne(box) {
+    const q = parseQuestion(box);
+    if (!q.title) return false;
+    const key = hash(q.type + '|' + q.title + '|' + q.opts.join('|'));
+    let ans = null, src = '';
+    const cached = bank()[key];
+    if (cached) { ans = cached.answer; src = '缓存'; }
+    if (!ans) {
+      try { const b = await queryBank(q); if (b) { ans = b; src = '题库'; } } catch (e) { log('题库查询失败：' + e.message, 'warn'); }
+    }
+    if (!ans && CFG.ai && CFG.ai.apiKey) {
+      const prompt = '题型：' + q.type + '\n题目：' + q.title + '\n选项：' + (q.opts.length ? q.opts.map((o, i) => String.fromCharCode(65 + i) + '.' + o).join(' / ') : '无') +
+        '\n请返回 JSON：{"type":"' + q.type + '","answer":"单选/判断填字母(A/B)；多选填字母串(如AC)；填空按顺序用;分隔；主观题写一段答案"}';
+      try {
+        const raw = await callAI(prompt);
+        const obj = extractJson(raw);
+        ans = obj.answer != null ? obj.answer : obj.result;
+        src = 'AI';
+      } catch (e) { log('AI 答题失败：' + e.message, 'err'); }
+    }
+    if (!ans) { log('未取到答案：' + clip(q.title, 30), 'warn'); return false; }
+    const norm = normalizeChoiceAnswer(q, ans);
+    const ok = applyAnswer(q, norm, box);
+    if (ok) {
+      const bb = bank(); bb[key] = { q: clip(q.title, 120), answer: norm, src, at: now() };
+      store.set(BANK_KEY, bb);
+      markFilled(box);
+      log(src + '：' + clip(String(norm), 40) + '（已填入）', 'ok');
+    } else {
+      log(src + ' 答案与页面格式不匹配：' + clip(String(norm), 40), 'warn');
+    }
+    return ok;
+  }
+
+  async function answerAll() {
+    const boxes = $('.question-box, .question').filter(b => !b.classList.contains('xw-filled'));
+    if (!boxes.length) { log('没有找到可作答的题目（或已全部填过）', 'warn'); return; }
+    log('开始答题：共 ' + boxes.length + ' 题');
+    for (const box of boxes) {
+      await answerOne(box);
+      await sleep(300);
+    }
+    log('答题完成：待确认 ' + pending.n + ' 题（默认不提交）', pending.n ? 'warn' : 'ok');
+  }
+
+  function findSubmitButton() {
+    const cands = $('button, .el-button, a, span').filter(vis);
+    const re = /^(提交|交卷|提交作业|提交答案|立即提交)$/;
+    return cands.find(el => re.test(clip(el.innerText, 12))) || null;
+  }
+
+  function findConfirmButton() {
+    const btns = $('.el-message-box__btns button, .el-dialog__footer button');
+    return btns.find(el => /确定|确认|提交/.test(clip(el.innerText, 8))) || null;
+  }
+
+  async function submitPaper() {
+    const kind = pageKind();
+    if (kind !== 'homework') {
+      log('当前不是作业页（' + (kind || '未知') + '）：考试/其它页面不自动提交，请手动检查后提交', 'err');
+      return;
+    }
+    const btn = findSubmitButton();
+    if (!btn) { log('没找到提交按钮，请手动提交', 'warn'); return; }
+    if (!confirm('确定提交作业吗？\n已填入 ' + pending.n + ' 题，请确认答案无误。')) { log('已取消提交', 'warn'); return; }
+    log('点击提交（已填 ' + pending.n + ' 题）', 'warn');
+    btn.click();
+    await sleep(900);
+    const okBtn = findConfirmButton();
+    if (okBtn) { okBtn.click(); log('已确认提交', 'warn'); }
+    await sleep(1200);
+    const msg = $('.el-message, .el-message-box__message').map(el => clip(el.innerText, 40)).join(' | ');
+    if (msg) log('提交反馈：' + msg, 'ok');
+  }
+
   async function answerCurrent() {
     const q = parseQuestion();
     if (!q.title) { log('没解析到题目', 'warn'); return; }
@@ -656,27 +748,28 @@
 
   /* -------------------------------------------------------------------- UI */
   const META = {
-    version: '0.10.0',
+    version: '0.10.1',
     maintainer: 'Selffox',
-    github: 'https://github.com/Selffox',
+    github: 'https://github.com/Selffox/beeline-ai-helper',
     email: '',
     origin: 'lxjuyn/xinwei-beeline-auto',
     originUrl: 'https://github.com/lxjuyn/xinwei-beeline-auto',
-    readme: 'https://github.com/Selffox/beeline-ai-helper/blob/main/README.md',
-    originAuthors: 'Zerox · lxjuyn'
+    originAuthors: 'Zerox · lxjuyn',
+    readme: 'https://github.com/Selffox/beeline-ai-helper/blob/main/README.md'
   };
 
   const CSS = `
   #xw-bar{position:fixed;left:16px;bottom:16px;z-index:2147483000;display:flex;align-items:center;gap:8px;height:40px;padding:0 12px;
-    border-radius:20px;background:#fff;border:1px solid #e5e7eb;box-shadow:0 8px 20px rgba(15,23,42,.12);cursor:pointer;
+    border-radius:20px;background:#fff;border:1px solid #e5e7eb;box-shadow:0 8px 20px rgba(15,23,42,.12);cursor:grab;
     font:12.5px/1 -apple-system,"Segoe UI","Microsoft YaHei",sans-serif;color:#334155;user-select:none}
+  #xw-bar:active{cursor:grabbing}
   #xw-bar.hide{display:none}
   #xw-bar .dot{width:9px;height:9px;border-radius:50%;background:#94a3b8;flex:0 0 auto}
   #xw-bar.g .dot{background:#10b981}
   #xw-bar.y .dot{background:#f59e0b}
   #xw-bar.r .dot{background:#ef4444}
   #xw-bar .txt{white-space:nowrap;max-width:190px;overflow:hidden;text-overflow:ellipsis}
-  #xw-bar .gear{font-size:13px;color:#94a3b8;padding-left:2px}
+  #xw-bar .gear{font-size:13px;color:#94a3b8;padding-left:2px;cursor:pointer}
   #xw-bar .gear:hover{color:#4f46e5}
 
   #xw-panel{position:fixed;left:16px;bottom:16px;width:320px;z-index:2147483001;background:#fff;border:1px solid #e5e7eb;
@@ -698,14 +791,22 @@
   .sw.on:after{left:21px}
   #xw-status{background:#f4f6fa;border:1px solid #eef2f7;border-radius:9px;padding:7px 10px;font-size:12px;color:#475569;
     white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .xw-legend{display:flex;flex-wrap:wrap;gap:10px;font-size:11px;color:#94a3b8;margin-top:-2px}
+  .xw-legend span{display:inline-flex;align-items:center}
+  .xw-legend i{width:7px;height:7px;border-radius:50%;background:#94a3b8;display:inline-block;margin-right:4px}
+  .xw-legend i.g{background:#10b981}
+  .xw-legend i.y{background:#f59e0b}
+  .xw-legend i.r{background:#ef4444}
   #xw-toggle{width:100%;padding:9px 0;border-radius:10px;border:1px solid #4f46e5;background:#4f46e5;color:#fff;
     font-size:13px;cursor:pointer}
   #xw-toggle.stop{background:#fff;color:#dc2626;border-color:#fecaca}
+  .xw-sub{display:flex;align-items:center;gap:8px;font-size:12.5px;color:#4f46e5;font-weight:600}
+  .xw-sub i{font-style:normal;cursor:pointer;font-size:14px}
   .xw-tabs{display:flex;gap:14px;padding:0 2px 6px;border-bottom:1px solid #eef2f7;font-size:12.5px;color:#64748b}
   .xw-tabs b,.xw-tabs span{position:relative;cursor:pointer;font-weight:400;color:#64748b}
   .xw-tabs b{color:#4f46e5;font-weight:600}
   .xw-tabs b:after{content:"";position:absolute;left:0;right:0;bottom:-7px;height:2px;background:#4f46e5;border-radius:2px}
-  .xw-pane{display:flex;flex-direction:column;gap:8px;max-height:300px;overflow:auto}
+  .xw-pane{display:flex;flex-direction:column;gap:8px;max-height:min(520px,calc(100vh - 240px));overflow:auto}
   .xw-pane[hidden]{display:none}
   .xw-row{display:flex;align-items:center;justify-content:space-between;gap:8px}
   .xw-row>span{font-size:12.5px;color:#475569;flex:0 0 84px}
@@ -715,8 +816,22 @@
   .xw-links{display:flex;gap:14px;font-size:12px;flex-wrap:wrap}
   .xw-links a{color:#4f46e5;text-decoration:none}
   .xw-links a:hover{text-decoration:underline}
+  .xw-note{font-size:11.5px;line-height:1.75;color:#64748b;background:#f8fafc;border:1px solid #eef2f7;border-radius:9px;padding:8px 10px}
+  .xw-note b.h{display:block;color:#334155;font-size:12px;margin-bottom:3px}
+  .xw-note ul{margin:0 0 6px 16px;padding:0}
+  .xw-note li{margin-bottom:2px}
+  .xw-note .dis{color:#94a3b8;font-size:11px;border-top:1px dashed #e5e7eb;padding-top:6px}
   #xw-save{width:100%;padding:8px 0;border-radius:9px;border:1px solid #4f46e5;background:#4f46e5;color:#fff;font-size:12.5px;cursor:pointer}
-  #xw-log{max-height:300px;overflow:auto;font-size:11.5px}
+.xw-beta{font-style:normal;font-size:10px;background:#fef3c7;color:#b45309;border:1px solid #fde68a;border-radius:6px;padding:0 4px;margin-left:3px;vertical-align:1px}
+  .xw-beta-bar{background:#fffbeb;border:1px solid #fde68a;color:#b45309;border-radius:8px;padding:6px 8px;font-size:11.5px;line-height:1.6}
+  .xw-beta-bar .xw-beta-sub{color:#a16207;font-size:11px;margin-top:2px;opacity:.9}
+  .xw-btn2{width:100%;padding:7px 0;border-radius:9px;border:1px solid #e5e7eb;background:#fff;color:#334155;font-size:12.5px;cursor:pointer}
+  .xw-btn2:hover{border-color:#c7d2fe;color:#4f46e5}
+  .xw-btn2.danger{border-color:#fecaca;color:#dc2626}
+  .xw-btn2.danger:hover{background:#fef2f2}
+  .xw-muted{color:#94a3b8;font-size:12px}
+  .xw-filled{outline:2px solid #f59e0b !important;outline-offset:2px;border-radius:8px}
+  #xw-log{max-height:380px;overflow:auto;font-size:11.5px}
   #xw-log .it{display:flex;gap:6px;margin-bottom:2px}
   #xw-log .tm{color:#94a3b8;flex:0 0 52px}
   #xw-log .ms{flex:1;word-break:break-all}
@@ -727,7 +842,6 @@
   .xw-about b{color:#0f172a}
   .xw-about a{color:#4f46e5;text-decoration:none}
   .xw-about a:hover{text-decoration:underline}
-  .xw-about .muted{color:#94a3b8;font-size:11.5px}
   #xw-reset{width:100%;padding:8px 0;border-radius:9px;border:1px solid #fecaca;background:#fff;color:#dc2626;font-size:12.5px;cursor:pointer}
   #xw-reset:hover{background:#fef2f2}
   `;
@@ -739,24 +853,29 @@
   }
 
   const UI = { folded: true, page: 'main', tab: 'play' };
+  const TAB_LABEL = { play: '播放', answer: '答题<i class="xw-beta">测试</i>', log: '日志' };
 
   function buildUI() {
     const wrap = document.createElement('div');
     wrap.innerHTML = `
-      <div id="xw-bar"><span class="dot"></span><span class="txt">已停止</span><span class="gear">⚙</span></div>
+      <div id="xw-bar"><span class="dot"></span><span class="txt">已停止</span><span class="gear" title="设置">⚙</span></div>
       <div id="xw-panel">
-        <div id="xw-hd"><span>芯位刷课</span><span class="ops"><button id="xw-gear" title="设置">⚙</button><button id="xw-min" title="收起">－</button></span></div>
+        <div id="xw-hd"><span>芯位刷课</span><span class="ops"><button id="xw-gear" title="设置">⚙</button><button id="xw-info" title="关于">ⓘ</button><button id="xw-min" title="收起">－</button></span></div>
 
         <div class="xw-bd" id="xw-main">
           <div class="xw-big"><span>自动刷课</span><div class="sw" id="xw-enabled"></div></div>
           <div id="xw-status">已停止</div>
+          <div class="xw-legend">
+            <span><i class="g"></i>运行中</span>
+            <span><i class="y"></i>等待 / 切换中</span>
+            <span><i class="r"></i>出错停止</span>
+            <span><i></i>已停止</span>
+          </div>
           <button id="xw-toggle">开始</button>
         </div>
 
         <div class="xw-bd" id="xw-settings" hidden>
-          <div class="xw-tabs">
-            <b data-tab="play">播放</b><span data-tab="answer">答题</span><span data-tab="log">日志</span><span data-tab="about">关于</span>
-          </div>
+          <div class="xw-tabs"><b data-tab="play">播放</b><span data-tab="answer">答题<i class="xw-beta">测试</i></span><span data-tab="log">日志</span></div>
 
           <div class="xw-pane" id="xw-tab-play">
             <div class="xw-row"><span>自动静音</span><div class="sw" id="xw-mute"></div></div>
@@ -767,25 +886,40 @@
           </div>
 
           <div class="xw-pane" id="xw-tab-answer" hidden>
+            <div class="xw-beta-bar"><div>⚠ 此模块为测试功能，答案仅供参考</div><div class="xw-beta-sub">本脚本免费；题库（言溪）与 AI 服务可能由第三方收费，与本脚本作者无关。</div></div>
             <div class="xw-row"><span>题库 token</span><input id="xw-bank-token" type="password" placeholder="必填"></div>
             <div class="xw-links"><a href="https://docs.ocsjs.com/docs/work" target="_blank" rel="noopener">📖 配置教程</a><a href="https://tk.enncy.cn/" target="_blank" rel="noopener">🔑 取 token</a></div>
             <div class="xw-row"><span>AI Key</span><input id="xw-ai-key" type="password" placeholder="可选"></div>
             <div class="xw-row"><span>AI 服务</span><input id="xw-ai-base" type="text" placeholder="可选"></div>
             <div class="xw-row"><span>AI 模型</span><input id="xw-ai-model" type="text" placeholder="可选"></div>
+            <div class="xw-row"><span>待确认</span><span id="xw-pending" class="xw-muted">0 题</span></div>
+            <button id="xw-doanswer" class="xw-btn2">开始答题（当前页）</button>
+            <button id="xw-submit" class="xw-btn2 danger">一键提交（仅作业）</button>
+            <div class="xw-note">
+              <b class="h">注意事项</b>
+              <ul>
+                <li>题库需自备 token，脚本不提供答案</li>
+                <li><b>默认只填不提交</b>；作业页可点「一键提交」，需二次确认</li>
+                <li>考试页不提供提交，请手动检查后提交</li>
+              </ul>
+              <div class="dis">免责声明：本脚本仅供个人学习与测试使用，禁止商业用途；使用风险自负，作者不对成绩、账号及任何后果负责。</div>
+            </div>
           </div>
 
           <div class="xw-pane" id="xw-tab-log" hidden><div id="xw-log"></div></div>
 
-          <div class="xw-pane" id="xw-tab-about" hidden>
-            <div class="xw-about">
-              <b>芯位刷课 ${META.version}</b> · GPL-3.0<br>
-              维护者：<b>${META.maintainer}</b><br>
-              <span id="xw-meta-links"></span>
-            </div>
-            <button id="xw-reset">重置所有设置</button>
-          </div>
-
           <button id="xw-save">保存配置</button>
+        </div>
+
+        <div class="xw-bd" id="xw-about" hidden>
+          <div class="xw-sub"><i id="xw-back">←</i> 关于</div>
+          <div class="xw-about">
+            <b>芯位刷课 ${META.version}</b> · GPL-3.0<br>
+            维护者：<b>${META.maintainer}</b><br>
+            <span id="xw-meta-links"></span>
+            <div style="color:#94a3b8;font-size:11px;margin-top:4px">本脚本免费；题库与 AI 服务由第三方收费，与本脚本作者无关。</div>
+          </div>
+          <button id="xw-reset">重置所有设置</button>
         </div>
       </div>`;
     document.body.appendChild(wrap);
@@ -801,14 +935,43 @@
       box.innerHTML = parts.join(' · ') + '<br>';
     }
 
+    function applyBarPos() {
+      const bar = $b('xw-bar');
+      const p = CFG.barPos;
+      if (p && Number.isFinite(p.left) && Number.isFinite(p.top)) {
+        bar.style.left = Math.max(4, Math.min(window.innerWidth - bar.offsetWidth - 4, p.left)) + 'px';
+        bar.style.top = Math.max(4, Math.min(window.innerHeight - bar.offsetHeight - 4, p.top)) + 'px';
+        bar.style.bottom = 'auto';
+      }
+    }
+
+    function placePanel(anchor) {
+      const bar = $b('xw-bar'), panel = $b('xw-panel');
+      const rect = anchor || bar.getBoundingClientRect();
+      const bw = rect.width, bh = rect.height, bx = rect.left, by = rect.top;
+      requestAnimationFrame(() => {
+        const pw = panel.offsetWidth || 320, ph = panel.offsetHeight || 240;
+        let left = Math.max(8, Math.min(window.innerWidth - pw - 8, bx));
+        let top = by - ph - 8;
+        if (top < 8) top = Math.min(window.innerHeight - ph - 8, by + bh + 8);
+        panel.style.left = left + 'px';
+        panel.style.top = Math.max(8, top) + 'px';
+        panel.style.bottom = 'auto';
+      });
+    }
+
     function showPanel(page) {
+      const anchor = $b('xw-bar').getBoundingClientRect();
       UI.folded = false;
       $b('xw-panel').classList.add('show');
       $b('xw-bar').classList.add('hide');
       UI.page = page || UI.page;
       $b('xw-main').hidden = UI.page !== 'main';
       $b('xw-settings').hidden = UI.page !== 'settings';
-      if (UI.page === 'settings') { fillSettings(); showTab(UI.tab); fillMeta(); }
+      $b('xw-about').hidden = UI.page !== 'about';
+      if (UI.page === 'settings') { fillSettings(); showTab(UI.tab); }
+      fillMeta();
+      placePanel(anchor);
     }
     function foldPanel() {
       UI.folded = true;
@@ -817,7 +980,7 @@
     }
     function showTab(tab) {
       UI.tab = tab || 'play';
-      ['play', 'answer', 'log', 'about'].forEach(t => {
+      ['play', 'answer', 'log'].forEach(t => {
         const pane = $b('xw-tab-' + t);
         if (pane) pane.hidden = t !== UI.tab;
       });
@@ -827,12 +990,13 @@
         if (el.tagName.toLowerCase() !== tag) {
           const repl = document.createElement(tag);
           repl.dataset.tab = el.dataset.tab;
-          repl.textContent = el.textContent;
+          repl.innerHTML = TAB_LABEL[el.dataset.tab] || el.textContent;
           el.replaceWith(repl);
         }
       });
       bindTabs();
-      $b('xw-save').style.display = (UI.tab === 'log' || UI.tab === 'about') ? 'none' : 'block';
+      $b('xw-save').style.display = (UI.tab === 'log') ? 'none' : 'block';
+      refreshPending();
       if (UI.tab === 'log') renderLog();
     }
     function bindTabs() {
@@ -841,12 +1005,47 @@
       });
     }
 
-    $b('xw-bar').addEventListener('click', (e) => {
-      const isGear = e.target && e.target.classList && e.target.classList.contains('gear');
-      showPanel(isGear ? 'settings' : 'main');
-    });
+    /* 状态条拖动 + 单击展开 */
+    (function barDrag() {
+      const bar = $b('xw-bar');
+      let st = null;
+      bar.addEventListener('mousedown', (e) => {
+        if (e.target.classList && e.target.classList.contains('gear')) return;
+        const r0 = bar.getBoundingClientRect();
+        st = { x: e.clientX, y: e.clientY, l: r0.left, t: r0.top, moved: false };
+        e.preventDefault();
+      });
+      document.addEventListener('mousemove', (e) => {
+        if (!st) return;
+        const dx = e.clientX - st.x, dy = e.clientY - st.y;
+        if (!st.moved && Math.abs(dx) + Math.abs(dy) < 5) return;
+        st.moved = true;
+        bar.style.left = Math.max(4, Math.min(window.innerWidth - bar.offsetWidth - 4, st.l + dx)) + 'px';
+        bar.style.top = Math.max(4, Math.min(window.innerHeight - bar.offsetHeight - 4, st.t + dy)) + 'px';
+        bar.style.bottom = 'auto';
+      });
+      document.addEventListener('mouseup', () => {
+        if (!st) return;
+        const moved = st.moved;
+        st = null;
+        if (moved) {
+          const rr = bar.getBoundingClientRect();
+          CFG.barPos = { left: Math.round(rr.left), top: Math.round(rr.top) };
+          saveCfg();
+        } else {
+          showPanel('main');
+        }
+      });
+      bar.querySelector('.gear').addEventListener('click', (e) => {
+        e.stopPropagation();
+        showPanel('settings');
+      });
+    })();
+
     $b('xw-min').addEventListener('click', foldPanel);
     $b('xw-gear').addEventListener('click', () => showPanel('settings'));
+    $b('xw-info').addEventListener('click', () => showPanel('about'));
+    $b('xw-back').addEventListener('click', () => showPanel('settings'));
 
     function bindSw(id, key, cb) {
       const el = $b(id);
@@ -865,6 +1064,8 @@
     bindSw('xw-menuspeed', 'useMenuSpeed', () => { state.speedTried = ''; state.speedBlocked = false; });
 
     $b('xw-toggle').addEventListener('click', () => setRunning(!state.running));
+    $b('xw-doanswer').addEventListener('click', answerAll);
+    $b('xw-submit').addEventListener('click', submitPaper);
 
     function fillSettings() {
       $b('xw-nonmedia').value = Math.round(Number(CFG.nonMediaWait) / 1000) || 10;
@@ -904,7 +1105,7 @@
       log('已重置所有设置', 'warn');
     });
 
-    /* 拖动 */
+    /* 面板拖动 */
     const hd = $b('xw-hd');
     const panel = $b('xw-panel');
     let drag = null;
@@ -914,14 +1115,15 @@
     });
     document.addEventListener('mousemove', (e) => {
       if (!drag) return;
-      panel.style.left = Math.max(4, drag.l + e.clientX - drag.x) + 'px';
-      panel.style.top = Math.max(4, drag.t + e.clientY - drag.y) + 'px';
+      panel.style.left = Math.max(4, Math.min(window.innerWidth - panel.offsetWidth - 4, drag.l + e.clientX - drag.x)) + 'px';
+      panel.style.top = Math.max(4, Math.min(window.innerHeight - panel.offsetHeight - 4, drag.t + e.clientY - drag.y)) + 'px';
       panel.style.bottom = 'auto';
     });
     document.addEventListener('mouseup', () => { drag = null; });
 
     bindTabs();
     fillMeta();
+    applyBarPos();
     showPanel('main');
     foldPanel();
     syncUI();

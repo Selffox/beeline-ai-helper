@@ -8,20 +8,22 @@
 
 脚本文件：`xinwei-beeline-helper.user.js`
 
-### 方式一：Tampermonkey（推荐）
+### 方式一：脚本猫（ScriptCat）（推荐）
+
+1. 打开 [脚本猫官网](https://scriptcat.org/)，安装浏览器扩展
+2. 用法教程见官方文档：[https://docs.scriptcat.org/docs/use/use](https://docs.scriptcat.org/docs/use/use)
+3. 装好扩展后，打开下面的脚本地址，脚本猫会接管并弹出安装确认；也可以把链接粘贴到脚本猫的「导入」里
+
+   **https://raw.githubusercontent.com/Selffox/beeline-ai-helper/main/xinwei-beeline-helper.user.js**
+
+### 方式二：Tampermonkey
 
 1. 安装 [Tampermonkey](https://www.tampermonkey.net/)
 2. 打开下面的链接，Tampermonkey 会自动弹出安装页，点「安装」：
 
    **https://raw.githubusercontent.com/Selffox/beeline-ai-helper/main/xinwei-beeline-helper.user.js**
 
-3. 装好后在 Tampermonkey 的脚本列表里显示为「芯位刷课」（中文环境显示「芯位刷课（芯位蜜线）」）
-
-### 方式二：脚本猫（ScriptCat）
-
-1. 打开 [脚本猫官网](https://scriptcat.org/)，安装浏览器扩展
-2. 用法教程见官方文档：[https://docs.scriptcat.org/docs/use/use](https://docs.scriptcat.org/docs/use/use)
-3. 装好扩展后，打开脚本地址（同上 raw 链接），脚本猫会接管并弹出安装确认；也可以把 raw 链接粘贴到脚本猫的「导入」里
+3. 装好后在脚本列表里显示为「芯位刷课」（中文环境显示「芯位刷课（芯位蜜线）」）
 
 > 两种管理器二选一即可，同一浏览器不要同时装两个管理器运行同一个脚本。
 
@@ -57,7 +59,7 @@
 - **跳过已完成**：按平台学习进度的真实观看秒数判断
 - **平台倍速**：只点播放器自带的倍速菜单（最高档）；平台没提供就保持 1x
 - **三级重试**：播放停滞 60 秒 → 重试播放 → 刷新页面（每节最多 2 次）→ 停止
-- **AI 答题**：题库优先（言溪题库）→ 本地缓存 → 可选 AI 兜底；只填不提交
+- **AI 答题（测试）**：题库优先（言溪题库）→ 本地缓存 → 可选 AI 兜底；默认只填不提交，作业页可一键提交（需二次确认），考试页不提交
 - **题目匹配校验**：否定词一致性 + 题干相似度，防止把「相似题」的答案填错
 - **极简面板**：平时一条 40px 状态条，点开才显示主面板
 
