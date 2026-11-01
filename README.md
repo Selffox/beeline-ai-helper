@@ -12,7 +12,11 @@
 
 1. 打开 [脚本猫官网](https://scriptcat.org/)，安装浏览器扩展
 2. 用法教程见官方文档：[https://docs.scriptcat.org/docs/use/use](https://docs.scriptcat.org/docs/use/use)
-3. 装好扩展后，打开下面的脚本地址，脚本猫会接管并弹出安装确认；也可以把链接粘贴到脚本猫的「导入」里
+3. 打开脚本猫商店页，点「安装脚本」：
+
+   **https://scriptcat.org/zh-CN/script-show-page/8841**
+
+4. 也可以直接用 raw 地址安装，或把链接粘贴到脚本猫的「导入」里：
 
    **https://raw.githubusercontent.com/Selffox/beeline-ai-helper/main/xinwei-beeline-helper.user.js**
 
