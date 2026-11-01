@@ -76,6 +76,22 @@
 
 题库 token 获取：登录 [言溪题库](https://tk.enncy.cn/) → 个人中心 → 更多配置，复制 token。
 
+## 致谢
+
+本项目的思路与实现参考了以下项目，在此感谢作者：
+
+| 项目 | 作者 | 借鉴内容 |
+|---|---|---|
+| [lxjuyn/xinwei-beeline-auto](https://github.com/lxjuyn/xinwei-beeline-auto) | lxjuyn | 项目底座（GPL-3.0）：刷课主流程、章节切换、面板结构 |
+| [poi-yee/51xinweiauto](https://github.com/poi-yee/51xinweiauto) | PoiYee | 更早的原型（GPL-3.0），明确了平台接口与页面结构 |
+| [芯位网课辅助 (Xinwei AutoStudy)](https://scriptcat.org/zh-CN/script-show-page/8163) | wikkd | 作业页 DOM 选择器（.homework-*）、提交前安全校验（未作答提示 / 按钮禁用）、平台风控提示监听、逐题确认模式思路（MIT） |
+| [XF芯位](https://scriptcat.org/zh-CN/script-show-page/6630) | XF | 首次运行免责声明的写法 |
+| [言溪题库](https://tk.enncy.cn/) | 言溪 | 题库查询 API |
+| [OCS 网课助手文档](https://docs.ocsjs.com/docs/work) | OCS | 题库配置教程 |
+
+lxjuyn 与 poi-yee 的项目为 GPL-3.0，本仓库同样以 GPL-3.0 发布；
+AutoStudy 为 MIT，本项目仅借鉴其思路与页面选择器，未复制其代码。
+
 ## 来源与许可
 
 - 本仓库是 [lxjuyn/xinwei-beeline-auto](https://github.com/lxjuyn/xinwei-beeline-auto) 的二次开发版本

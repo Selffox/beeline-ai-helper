@@ -2,7 +2,7 @@
 // @name         芯位刷课
 // @name:zh-CN   芯位刷课（芯位蜜线）
 // @namespace    https://github.com/Selffox/beeline-ai-helper
-// @version      0.10.2
+// @version      0.10.3
 // @description  芯位蜜线/芯位教育（www.beeline-ai.com）自动刷课：播完才跳、完成度判定、平台倍速、三级重试、题库+AI 答题
 // @author       Selffox(重构) · Zerox(原版) · lxjuyn(新域名适配)
 // 来源说明：基于 lxjuyn/xinwei-beeline-auto（GPL-3.0）二次开发，原作者 Zerox / lxjuyn
@@ -435,7 +435,14 @@
       else if (/填空/.test(typeText)) type = 'completion';
       else if (/主观|简答|论述|问答/.test(typeText)) type = 'subjective';
     }
-    const opts = $('.el-radio, .el-checkbox, .el-radio-group label, .el-checkbox-group label', box)
+    if (type === 'unknown') {
+      // 按 DOM 结构兜底判题型
+      if (box.querySelector('.el-checkbox-group, .el-checkbox, .homework-multiple-selected')) type = 'multiple';
+      else if (box.querySelector('.el-radio-group, .el-radio, .homework-single-selected')) type = 'single';
+      else if (box.querySelector('[contenteditable="true"], textarea, .w-e-textarea')) type = 'subjective';
+      else if (box.querySelector('input[type=text], input:not([type])')) type = 'completion';
+    }
+    const opts = $$('.el-radio, .el-checkbox, .el-radio-group label, .el-checkbox-group label', box)
       .map(el => clip((el.querySelector('.label') || el).innerText, 120)).filter(Boolean);
     return { title, type, opts };
   }
@@ -466,6 +473,7 @@
     const ai = CFG.ai;
     if (!ai.apiKey) throw new Error('未配置 AI apiKey（面板设置里填）');
     const url = ai.baseUrl.replace(/\/$/, '') + '/chat/completions';
+    const isDeepSeek = /api\.deepseek\.com/i.test(ai.baseUrl);
     const body = {
       model: ai.model,
       temperature: Number(ai.temperature) || 0.2,
@@ -475,6 +483,7 @@
         { role: 'user', content: payload }
       ]
     };
+    if (isDeepSeek) body.thinking = { type: 'disabled' };  // DeepSeek 默认开思考模式，答题场景关掉更快更省
     const j = await gmRequest({ url, method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + ai.apiKey }, data: JSON.stringify(body) });
     if (j.error) throw new Error('AI 接口错误：' + (j.error.message || JSON.stringify(j.error)));
     return (j.choices && j.choices[0] && j.choices[0].message && j.choices[0].message.content) || '';
@@ -492,7 +501,10 @@
       const labels = $$('.el-radio-group label', box);
       let idx = -1;
       if (q.type === 'judgement') {
-        idx = /正确|对|是|true/i.test(ans) ? 0 : 1;
+        const t = String(ans).trim();
+        if (/^A$/i.test(t)) idx = 0;
+        else if (/^B$/i.test(t)) idx = 1;
+        else idx = /正确|对|是|真|true|√/i.test(t) ? 0 : 1;
       } else {
         const L = String(ans).trim().toUpperCase().replace(/[^A-Z]/g, '');
         idx = L ? L.charCodeAt(0) - 65 : -1;
@@ -542,17 +554,37 @@
     return false;
   }
 
+  function optText(o) {
+    return normText(String(o || '').replace(/^\s*[A-Ha-h][\.、:：\)]\s*/, ''));
+  }
+
   function normalizeChoiceAnswer(q, ans) {
-    const s = String(ans);
+    const s = String(ans || '').trim();
+    if (q.type === 'judgement') {
+      if (/^(正确|对|是|真|true|t|√|a)$/i.test(s)) return 'A';
+      if (/^(错误|错|否|假|false|f|×|x|b)$/i.test(s)) return 'B';
+      return s;
+    }
     if (q.type === 'single' || q.type === 'multiple') {
-      const letters = (s.match(/[A-H]/g) || []).filter((v, i, a) => a.indexOf(v) === i);
-      if (letters.length) return q.type === 'multiple' ? letters.slice().sort().join('') : letters[0];
+      const rawLetters = (s.toUpperCase().match(/[A-H]/g) || []).filter((v, i, a) => a.indexOf(v) === i);
+      if (rawLetters.length && /^[A-Ha-h\s,，、\/|]+$/.test(s)) {
+        return q.type === 'multiple' ? rawLetters.slice().sort().join('') : rawLetters[0];
+      }
+      const target = normText(s).toLowerCase();
+      const hits = [];
+      (q.opts || []).forEach((o, i) => {
+        const ot = optText(o).toLowerCase();
+        if (!ot || !target) return;
+        if (ot === target || ot.includes(target) || target.includes(ot)) hits.push(i);
+      });
+      if (hits.length) {
+        return q.type === 'multiple'
+          ? hits.map(i => String.fromCharCode(65 + i)).join('')
+          : String.fromCharCode(65 + hits[0]);
+      }
+      if (rawLetters.length) return q.type === 'multiple' ? rawLetters.slice().sort().join('') : rawLetters[0];
     }
-    if (q.opts && q.opts.length) {
-      const idx = q.opts.findIndex(o => o && s.includes(o.slice(0, Math.min(10, o.length))));
-      if (idx >= 0) return String.fromCharCode(65 + idx);
-    }
-    return s.trim();
+    return s;
   }
 
   function normText(s) {
@@ -688,7 +720,7 @@
   }
 
   async function answerAll() {
-    const boxes = $(Q_SEL).filter(b => !b.classList.contains('xw-filled') && vis(b));
+    const boxes = $$(Q_SEL).filter(b => !b.classList.contains('xw-filled') && vis(b));
     if (!boxes.length) { log('没有找到可作答的题目（或已全部填过）', 'warn'); return; }
     log('开始答题：共 ' + boxes.length + ' 题');
     for (const box of boxes) {
@@ -699,7 +731,7 @@
   }
 
   function findSubmitButton() {
-    const cands = $('button, .el-button, a').filter(el => vis(el) && !el.closest('#xw-panel'));
+    const cands = $$('button, .el-button, a').filter(el => vis(el) && !el.closest('#xw-panel'));
     const exact = cands.find(el => clip(el.innerText, 12) === '提交作业');
     if (exact) return exact;
     return cands.find(el => /^(提交|交卷|提交答案|立即提交)$/.test(clip(el.innerText, 12))) || null;
@@ -744,7 +776,7 @@
     const okBtn = findConfirmButton();
     if (okBtn) { okBtn.click(); log('已确认提交', 'warn'); }
     await sleep(1200);
-    const msg = $('.el-message, .el-message-box__message').map(el => clip(el.innerText, 40)).join(' | ');
+    const msg = $$('.el-message, .el-message-box__message').map(el => clip(el.innerText, 40)).join(' | ');
     if (msg) log('提交反馈：' + msg, 'ok');
   }
 
@@ -826,7 +858,7 @@
 
   /* -------------------------------------------------------------------- UI */
   const META = {
-    version: '0.10.2',
+    version: '0.10.3',
     maintainer: 'Selffox',
     github: 'https://github.com/Selffox/beeline-ai-helper',
     email: '',
