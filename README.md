@@ -94,6 +94,8 @@
 | [言溪题库](https://tk.enncy.cn/) | 言溪 | 题库查询 API |
 | [OCS 网课助手文档](https://docs.ocsjs.com/docs/work) | OCS | 题库配置教程 |
 
+脚本图标（狐狸读书）由 [marktuwen1179-gif](https://github.com/marktuwen1179-gif) 提供，已获授权使用。
+
 lxjuyn 与 poi-yee 的项目为 GPL-3.0，本仓库同样以 GPL-3.0 发布；
 AutoStudy 为 MIT，本项目仅借鉴其思路与页面选择器，未复制其代码。
 

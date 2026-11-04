@@ -13,6 +13,7 @@
 // @tag          题库
 // @tag          自动答题
 // 来源说明：基于 lxjuyn/xinwei-beeline-auto（GPL-3.0）二次开发，原作者 Zerox / lxjuyn
+// 图标：狐狸读书，由 marktuwen1179-gif 提供（https://github.com/marktuwen1179-gif）
 // @original-author  lxjuyn
 // @original-license GPL-3.0
 // @original-script  https://github.com/lxjuyn/xinwei-beeline-auto
