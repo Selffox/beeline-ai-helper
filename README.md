@@ -1,4 +1,4 @@
-# 芯位刷课（beeline-ai）
+# 芯位学习助手（Beeline Fox）
 
 > 芯位蜜线 / 芯位教育（beeline-ai.com）的自动刷课脚本。
 > 基于 [lxjuyn/xinwei-beeline-auto](https://github.com/lxjuyn/xinwei-beeline-auto)（GPL-3.0）重构。
@@ -27,7 +27,7 @@
 
    **https://raw.githubusercontent.com/Selffox/beeline-ai-helper/main/xinwei-beeline-helper.user.js**
 
-3. 装好后在脚本列表里显示为「芯位刷课」（中文环境显示「芯位刷课（芯位蜜线）」）
+3. 装好后在脚本列表里显示为「芯位学习助手」（英文环境显示「Beeline Fox」）
 
 > 两种管理器二选一即可，同一浏览器不要同时装两个管理器运行同一个脚本。
 

@@ -1,6 +1,7 @@
 // ==UserScript==
-// @name         芯位刷课
-// @name:zh-CN   芯位刷课（芯位蜜线）
+// @name         芯位学习助手
+// @name:zh-CN   芯位学习助手
+// @name:en      Beeline Fox
 // @namespace    https://github.com/Selffox/beeline-ai-helper
 // @version      0.10.5
 // @description  芯位蜜线/芯位教育（www.beeline-ai.com）自动刷课：播完才跳、完成度判定、平台倍速、三级重试、题库+AI 答题
@@ -989,7 +990,7 @@
         </div>
       </div>
       <div id="xw-panel">
-        <div id="xw-hd"><span>芯位刷课</span><span class="ops"><button id="xw-gear" title="设置">⚙</button><button id="xw-info" title="关于">ⓘ</button><button id="xw-min" title="收起">－</button></span></div>
+        <div id="xw-hd"><span>芯位学习助手</span><span class="ops"><button id="xw-gear" title="设置">⚙</button><button id="xw-info" title="关于">ⓘ</button><button id="xw-min" title="收起">－</button></span></div>
 
         <div class="xw-bd" id="xw-main">
           <div class="xw-big"><span>自动刷课</span><div class="sw" id="xw-enabled"></div></div>
@@ -1043,7 +1044,7 @@
         <div class="xw-bd" id="xw-about" hidden>
           <div class="xw-sub"><i id="xw-back">←</i> 关于</div>
           <div class="xw-about">
-            <b>芯位刷课 ${META.version}</b> · GPL-3.0<br>
+            <b>芯位学习助手 ${META.version}</b> · GPL-3.0<br>
             维护者：<b>${META.maintainer}</b><br>
             <span id="xw-meta-links"></span>
             <div style="color:#94a3b8;font-size:11px;margin-top:4px">本脚本免费；题库与 AI 服务由第三方收费，与本脚本作者无关。</div>
